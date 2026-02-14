@@ -4,68 +4,90 @@ import numpy as np
 import time
 from datetime import datetime, timedelta
 
-# Settings
-SHORT_WINDOW = 50
-LONG_WINDOW = 200
+# Configuration
+SHORT_EMA = 50
+LONG_EMA = 200
 TIMEFRAMES = ['1h', '4h', '1d']
 QUOTE_ASSET = "USDT"
 
-def fetch_klines(symbol, interval, limit=300):
-    """Fetches public candle data without an API key."""
-    url = f"https://api.binance.com/api/v3/klines"
-    params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+def fetch_klines(symbol, interval):
+    """Fetches candle data using Binance Public API (No API Key required)"""
+    url = "https://api.binance.com/api/v3/klines"
+    params = {'symbol': symbol, 'interval': interval, 'limit': 300}
     try:
         response = requests.get(url, params=params, timeout=10)
+        if response.status_code != 200: return None
+        
         data = response.json()
+        # Create DataFrame from raw list
         df = pd.DataFrame(data, columns=[
             'open_time', 'open', 'high', 'low', 'close', 'volume',
             'close_time', 'qav', 'num_trades', 'taker_base', 'taker_quote', 'ignore'
         ])
         df['close'] = df['close'].astype(float)
-        df['time'] = pd.to_datetime(df['close_time'], unit='ms')
+        df['timestamp'] = pd.to_datetime(df['close_time'], unit='ms')
         return df
-    except:
+    except Exception:
         return None
 
-def find_cross(df):
-    """Checks for a Golden Cross in the last 24 hours."""
-    if df is None or len(df) < LONG_WINDOW: return False
+def check_golden_cross(df):
+    """Detects if 50 EMA crossed above 200 EMA in the last 24 hours"""
+    if df is None or len(df) < LONG_EMA: return False
     
-    # Calculate SMAs
-    df['sma50'] = df['close'].rolling(SHORT_WINDOW).mean()
-    df['sma200'] = df['close'].rolling(LONG_WINDOW).mean()
+    # Calculate EMA (more common for Golden Cross than SMA)
+    df['ema50'] = df['close'].ewm(span=SHORT_EMA, adjust=False).mean()
+    df['ema200'] = df['close'].ewm(span=LONG_EMA, adjust=False).mean()
     
-    # Look at the last 24 hours only
-    last_24h = datetime.utcnow() - timedelta(hours=24)
-    recent = df[df['time'] >= last_24h].copy()
+    # Define the 24-hour window
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent = df[df['timestamp'] >= cutoff]
     
-    # Check for crossover: 50 was below 200, now it is above
+    if recent.empty: return False
+
+    # Check for crossover logic: 
+    # Current: EMA50 > EMA200 AND Previous: EMA50 <= EMA200
     for i in range(1, len(df)):
-        if df['time'].iloc[i] >= last_24h:
-            if df['sma50'].iloc[i] > df['sma200'].iloc[i] and \
-               df['sma50'].iloc[i-1] <= df['sma200'].iloc[i-1]:
+        if df['timestamp'].iloc[i] >= cutoff:
+            if df['ema50'].iloc[i] > df['ema200'].iloc[i] and \
+               df['ema50'].iloc[i-1] <= df['ema200'].iloc[i-1]:
                 return True
     return False
 
-# 1. Get all USDT symbols
-exchange_info = requests.get("https://api.binance.com/api/v3/exchangeInfo").json()
-symbols = [s['symbol'] for s in exchange_info['symbols'] 
-           if s['status'] == 'TRADING' and s['symbol'].endswith(QUOTE_ASSET)]
+# 1. Get List of Symbols
+try:
+    resp = requests.get("https://api.binance.com/api/v3/exchangeInfo")
+    data = resp.json()
+    # Safely get symbols list
+    symbols = [s['symbol'] for s in data.get('symbols', []) 
+               if s['status'] == 'TRADING' and s['symbol'].endswith(QUOTE_ASSET)]
+except Exception as e:
+    print(f"Failed to fetch market info: {e}")
+    symbols = []
 
 print(f"Scanning {len(symbols)} pairs...")
-results = []
+found_signals = []
 
-for symbol in symbols[:100]: # Scanning first 100 to stay under GitHub's time limit
-    status = {'Symbol': symbol}
-    found_any = False
+# 2. Run Scan (Limited to top 150 pairs to avoid GitHub timeouts)
+for symbol in symbols[:150]:
+    row = {'Symbol': symbol}
+    hit = False
     for tf in TIMEFRAMES:
         df = fetch_klines(symbol, tf)
-        if find_cross(df):
-            status[tf] = "🚀 CROSS"
-            found_any = True
+        if check_golden_cross(df):
+            row[tf] = "🚀 GOLDEN"
+            hit = True
         else:
-            status[tf] = "-"
+            row[tf] = "-"
     
-    if found_any:
-        results.append(status)
-    time.sleep(0.1) # Small delay to be nice
+    if hit:
+        found_signals.append(row)
+    time.sleep(0.1) # Be kind to Binance API
+
+# 3. Print Results
+if found_signals:
+    print("\n" + "="*30)
+    print("GOLDEN CROSS ALERTS (Last 24h)")
+    print("="*30)
+    print(pd.DataFrame(found_signals).to_string(index=False))
+else:
+    print("\nNo Golden Crosses found in the last 24 hours.")
