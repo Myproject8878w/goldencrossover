@@ -1,27 +1,18 @@
-name: Binance Scanner Bot
-
+name: Binance Scanner
 on:
   schedule:
-    - cron: '0 */4 * * *' # Runs every 4 hours
-  workflow_dispatch:      # Allows manual trigger
-
+    - cron: '0 * * * *' # Every hour
+  workflow_dispatch:
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
+      - uses: actions/checkout@v3
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
-
-      - name: Install dependencies
+          python-version: '3.10'
+      - name: Install Libs
         run: pip install -r requirements.txt
-
-      - name: Run Scanner
-        env:
-          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
-          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+      - name: Run
         run: python scanner.py
