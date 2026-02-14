@@ -1,2 +1,4 @@
-ccxt
+python-binance
 pandas
+numpy
+tqdm
